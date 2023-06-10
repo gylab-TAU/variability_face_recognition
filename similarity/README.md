@@ -1,7 +1,11 @@
 # Get Similarity Matrix
-The following scripts are used to get similarity matrix from a given dataset. 
+The scripts here can be used to get a similarity matrix for all images in a given dataset. 
+The matrix will represent the cosine similarity between the embeddings of each pair of images.
 
-Different models can be used, defined in `models.py`.
+These embeddings are obtained by passing the images through a pre-trained model, and extracting the output of the last layer before the classification layer 
+(In VGG16 for example, this would be fc7).
+
+This module allows to experiment with different models, detailed in the next section.
 
 ### Models
 
@@ -14,10 +18,7 @@ When using this model, weights should be provided.
    
 Model available online, no weights needed.
 
-#### *3. InceptionResNet architecture* 
-
-Use the one of the two options to get the pre-trained model:
-vggface2, casia-webface
+#### *3. InceptionResNet architecture, pretrained on vggface2 or casia-webface*
    
 See documentation here: https://github.com/timesler/facenet-pytorch
 
