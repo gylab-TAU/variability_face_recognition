@@ -16,7 +16,7 @@ def get_vgg_pretrained_vggface2(weights_path, return_layer='classifier.4', retur
 
 
 def get_vgg_pretrained_imagenet(return_layer='classifier.4', return_layer_new_name='fc7'):
-    model = torch.hub.load('pytorch/vision:v0.10.0', 'vgg16', pretrained=True).eval()
+    model = torch.hub.load('pytorch/vision:v0.10.0', 'vgg16', weights='DEFAULT').eval()
     return_layers = {return_layer: return_layer_new_name}
     mid_getter = MidGetter(model, return_layers=return_layers, keep_output=False)
     return mid_getter

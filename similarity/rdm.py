@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
@@ -10,10 +11,11 @@ from facenet_pytorch import MTCNN
 from torchvision import transforms
 from models import get_vgg_pretrained_vggface2, get_vgg_pretrained_imagenet, get_resnet_model
 from sim_transforms import normalize, Rescale
+logging.basicConfig(level=logging.INFO)
 
-mtcnn = MTCNN(image_size=224, post_process=False)
+
+
 cos = torch.nn.CosineSimilarity()
-
 composed_transforms = transforms.Compose([transforms.ToTensor(), Rescale((224, 224)), normalize])
 
 
@@ -32,6 +34,8 @@ def load_data(data_dir, num_classes=None, instance_num_per_class=None):
         classes_list = classes_list[:num_classes]
     for c in classes_list:
         class_path = os.path.join(data_dir, c)
+        if not os.path.isdir(class_path):
+            continue
         imgs = os.listdir(class_path)
         if instance_num_per_class:
             imgs = imgs[:instance_num_per_class]
@@ -62,10 +66,17 @@ def get_model(model_type, model_weights=None):
         raise ValueError('model type not supported')
     return model, embedding_size
 
+def get_mtcnn(model_type):
+    if model_type.startswith('resnet'):
+        return MTCNN(image_size=160, post_process=False)
+    elif model_type.startswith('vgg'):
+        return MTCNN(image_size=224, post_process=False)
 
-def get_embeddings(data, model_type, perform_mtcnn=True):
-    model, embedding_size = get_model('vgg_vggface2', args.model_path)
+
+def get_embeddings(data, model_type, model_path=None, perform_mtcnn=True):
+    model, embedding_size = get_model(model_type, model_path)
     embeddings = np.zeros((len(data), embedding_size))
+    mtcnn = get_mtcnn(model_type)
 
     for i, im_path in enumerate(data):
         img = Image.open(im_path)
@@ -80,10 +91,10 @@ def get_embeddings(data, model_type, perform_mtcnn=True):
         else:  # in case images are already post mtcnn. In this case need to rescale to 160x160 and normalize
             img = composed_transforms(img)
 
-        if model_type == ('vgg_vggface2' or 'vgg_imagenet'):
+        if model_type.startswith('vgg'):
             img_embedding = model(img.unsqueeze(0).float())[0]['fc7']
         else:
-            img_embedding = model(img.unsqueeze(0).float())
+            img_embedding = model(img.unsqueeze(0).float())[0]
 
         embeddings[i] = img_embedding.detach().numpy()
 
@@ -95,7 +106,6 @@ def get_rdm(embeddings):
     for i, first_em in enumerate(embeddings):
         for j, second_em in enumerate(embeddings):
             rdm[i, j] = np.dot(first_em, second_em) / (norm(first_em) * norm(second_em))
-    print(rdm)
     return rdm
 
 
@@ -115,24 +125,39 @@ def save_rdm_matrix_with_names(rdm, names, save_path):
             writer.writerow(row)
 
 
+def validate_args(args):
+    data_dir = args.data_dir
+    if not args.model_type:
+        logging.info('model type not provided, using default resnet pretrained on vggface2')
+        model_type = 'resnet_vggface2'
+    else:
+        model_type = args.model_type
+    if model_type == 'vgg_vggface2' and not args.model_path:
+        raise TypeError('model weights must be provided for vgg_vggface2')
+
+    if not args.output_path:
+        logging.info(f'results path not provided, saving to data_dir {args.data_dir}/rdm.csv')
+        output_path = os.path.join(args.data_dir, 'rdm.csv')
+    else:
+        output_path = args.output_path
+        output_path = os.path.join(output_path, 'rdm.csv')
+
+    return data_dir, model_type, args.model_path, output_path
+
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("-data_dir", "--data_dir", dest="data_dir", help="folder with data")
+    parser.add_argument("-model_type", "--model_type", dest="model_type", help="type from models.py", required=False)
     parser.add_argument("-model_path", "--model_path", dest="model_path", help="path to model weights", required=False)
-    parser.add_argument("-results_path", "--results_path", dest="results_path", help="path to save csv result",
-                        required=False)
+    parser.add_argument("-output_path", "--output_path", dest="output_path", help="csv result dir", required=False)
     args = parser.parse_args()
+    data_dir, model_type, model_path, output_path = validate_args(args)
 
-    data_paths_list, names_list = load_data(args.data_dir, num_classes=10, instance_num_per_class=10)
-
-    model_embeddings = get_embeddings(data_paths_list, 'vgg_vggface2', perform_mtcnn=True)
+    data_paths_list, names_list = load_data(args.data_dir)
+    model_embeddings = get_embeddings(data_paths_list, model_type, model_path, perform_mtcnn=True)
     rdm_matrix = get_rdm(model_embeddings)
-
-    if not args.results_path:
-        print(f'results path not provided, saving to data_dir {args.data_dir}/rdm.csv ')
-        args.results_path = os.path.join(args.data_dir, 'rdm.csv')
-
-    save_rdm_matrix_with_names(rdm_matrix, names_list, args.results_path)
+    save_rdm_matrix_with_names(rdm_matrix, names_list, output_path)
 
     plt.imshow(rdm_matrix)
     plt.show()
