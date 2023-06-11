@@ -11,8 +11,10 @@ This module allows to experiment with different models, detailed in the next sec
 
 #### *1. VGG architecure, trained on VGGFace2 dataset*
 
-Pre-trained on 8749 identities from the VGGFace2 dataset.
+Pre-trained on 8749 identities from the VGGFace2 dataset (Trained by Idan :crown:)
+
 When using this model, weights should be provided.
+Ask Idan or Shiri for the weights file (shirialmog1@gmail.com)
 
 #### *2. VGG architecure, trained on imagenet dataset*
    
