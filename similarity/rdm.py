@@ -9,14 +9,13 @@ import csv
 import torch
 from facenet_pytorch import MTCNN
 from torchvision import transforms
-from models import get_vgg_pretrained_vggface2, get_vgg_pretrained_imagenet, get_resnet_model
-from sim_transforms import normalize, Rescale
+from common.models import get_vgg_pretrained_vggface2, get_vgg_pretrained_imagenet, get_resnet_model
+from common.mytransforms import normalize_imagenet, Rescale
+
 logging.basicConfig(level=logging.INFO)
 
-
-
 cos = torch.nn.CosineSimilarity()
-composed_transforms = transforms.Compose([transforms.ToTensor(), Rescale((224, 224)), normalize])
+composed_transforms = transforms.Compose([transforms.ToTensor(), Rescale((224, 224)), normalize_imagenet])
 
 
 def load_data(data_dir, num_classes=None, instance_num_per_class=None):
@@ -47,15 +46,19 @@ def load_data(data_dir, num_classes=None, instance_num_per_class=None):
     return paths_list, names
 
 
-def get_model(model_type, model_weights=None):
+def get_model(model_type, model_weights=None, layer_name=None, layer_size=None):
     if model_type == 'vgg_vggface2':
         if model_weights is None:
             raise TypeError('model weights must be provided for vgg_vggface2')
-        model = get_vgg_pretrained_vggface2(model_weights)
-        embedding_size = 4096
+        if layer_size and layer_name:
+            model = get_vgg_pretrained_vggface2(model_weights, return_layer=layer_name)
+            embedding_size = layer_size
+        else:
+            model = get_vgg_pretrained_vggface2(model_weights)
+            embedding_size = 4096
     elif model_type == 'vgg_imagenet':
-        model = get_vgg_pretrained_imagenet()
-        embedding_size = 4096
+        model = get_vgg_pretrained_imagenet(return_layer='features.2', return_layer_new_name='fc7')
+        embedding_size = 64
     elif model_type == 'resnet_vggface2':
         model = get_resnet_model(pretrain='vggface2')
         embedding_size = 512
@@ -66,6 +69,7 @@ def get_model(model_type, model_weights=None):
         raise ValueError('model type not supported')
     return model, embedding_size
 
+
 def get_mtcnn(model_type):
     if model_type.startswith('resnet'):
         return MTCNN(image_size=160, post_process=False)
@@ -73,8 +77,8 @@ def get_mtcnn(model_type):
         return MTCNN(image_size=224, post_process=False)
 
 
-def get_embeddings(data, model_type, model_path=None, perform_mtcnn=True):
-    model, embedding_size = get_model(model_type, model_path)
+def get_embeddings(data, model_type, model_path=None, perform_mtcnn=True, layer_name='fc7', layer_size=4096):
+    model, embedding_size = get_model(model_type, model_path, layer_name, layer_size)
     embeddings = np.zeros((len(data), embedding_size))
     mtcnn = get_mtcnn(model_type)
 
@@ -87,16 +91,16 @@ def get_embeddings(data, model_type, model_path=None, perform_mtcnn=True):
             # if mtcnn post_processing = true, image is standardised to -1 to 1, and size 160x160.
             # else, image is not standardised ([0-255]), and size is 160x160
             img = img / 255.0
-            img = normalize(img)
+            img = normalize_imagenet(img)
         else:  # in case images are already post mtcnn. In this case need to rescale to 160x160 and normalize
             img = composed_transforms(img)
 
         if model_type.startswith('vgg'):
-            img_embedding = model(img.unsqueeze(0).float())[0]['fc7']
+            img_embedding = model(img.unsqueeze(0).float())[0]['output']
         else:
             img_embedding = model(img.unsqueeze(0).float())[0]
 
-        embeddings[i] = img_embedding.detach().numpy()
+        embeddings[i] = torch.flatten(img_embedding).detach().numpy()
 
     return embeddings
 
@@ -125,7 +129,7 @@ def save_rdm_matrix_with_names(rdm, names, save_path):
             writer.writerow(row)
 
 
-def validate_args(args):
+def validate_args(args, save_name):
     data_dir = args.data_dir
     if not args.model_type:
         logging.info('model type not provided, using default resnet pretrained on vggface2')
@@ -140,7 +144,7 @@ def validate_args(args):
         output_path = os.path.join(args.data_dir, 'rdm.csv')
     else:
         output_path = args.output_path
-        output_path = os.path.join(output_path, 'rdm.csv')
+        output_path = os.path.join(output_path, f'rdm_{save_name}.csv')
 
     return data_dir, model_type, args.model_path, output_path
 
@@ -152,7 +156,8 @@ if __name__ == '__main__':
     parser.add_argument("-model_path", "--model_path", dest="model_path", help="path to model weights", required=False)
     parser.add_argument("-output_path", "--output_path", dest="output_path", help="csv result dir", required=False)
     args = parser.parse_args()
-    data_dir, model_type, model_path, output_path = validate_args(args)
+    save_name = 'fc7'
+    data_dir, model_type, model_path, output_path = validate_args(args, save_name)
 
     data_paths_list, names_list = load_data(args.data_dir)
     model_embeddings = get_embeddings(data_paths_list, model_type, model_path, perform_mtcnn=True)
@@ -160,4 +165,6 @@ if __name__ == '__main__':
     save_rdm_matrix_with_names(rdm_matrix, names_list, output_path)
 
     plt.imshow(rdm_matrix)
+    plt.title(f'RDM {save_name}')
+    plt.savefig(os.path.join(args.output_path, f'rdm_{save_name}.png'))
     plt.show()

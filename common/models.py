@@ -4,13 +4,13 @@ import torchvision
 from torch_intermediate_layer_getter import IntermediateLayerGetter as MidGetter
 
 
-def get_vgg_pretrained_vggface2(weights_path, return_layer='classifier.4', return_layer_new_name='fc7'):
+def get_vgg_pretrained_vggface2(weights_path, return_layer='classifier.4'):
     model = torchvision.models.vgg16().eval()
     model.features = torch.nn.DataParallel(model.features)
     model.classifier[-1] = torch.nn.Linear(in_features=4096, out_features=8749)
     weights = torch.load(weights_path, map_location=torch.device('cpu'))['state_dict']
     model.load_state_dict(weights)
-    return_layers = {return_layer: return_layer_new_name}
+    return_layers = {return_layer: 'output'}
     mid_getter = MidGetter(model, return_layers=return_layers, keep_output=False)
     return mid_getter
 
