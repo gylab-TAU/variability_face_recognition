@@ -22,6 +22,11 @@ def get_vgg_pretrained_imagenet(return_layer='classifier.4', return_layer_new_na
     return mid_getter
 
 
+def get_vgg(num_classes=1000, pretrained=False):
+    model = torch.hub.load('pytorch/vision:v0.10.0', 'vgg16', weights='DEFAULT').eval()
+    model.classifier[-1] = torch.nn.Linear(in_features=4096, out_features=num_classes)
+    return model
+
 def get_resnet_model(pretrain='vggface2'):
     # options are: vggface2, casia-webface https://github.com/timesler/facenet-pytorch
     model = InceptionResnetV1(pretrained=pretrain).eval()
