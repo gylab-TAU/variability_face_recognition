@@ -9,7 +9,7 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 import torchmetrics
-
+from clearml import Task
 from datasets import get_datasets
 #from training.dataset import TestDataset
 
@@ -18,12 +18,16 @@ from config import TrainConfig
 
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
+np.random.seed(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
 
-def train_vgg(df, weights_dir):
+
+def train_vgg(df, weights_dir, config):
     epochs = config.num_epochs
     writer = SummaryWriter(log_dir=weights_dir, comment=config.exp_name)
 
-    train_dataset, val_dataset = get_datasets(df)
+    train_dataset, val_dataset = get_datasets(df, augment_train = True)
     # test_dataset = TestDataset(config.df_test)
     train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
@@ -43,6 +47,8 @@ def train_vgg(df, weights_dir):
         epoch_train_loss, epoch_train_acc = [], []
 
         for i, data in enumerate(train_dataloader):
+            if i>=10:
+                break
             inputs = data['image'].to(device)
             labels = data['img_class'].to(device)
 
@@ -74,6 +80,8 @@ def train_vgg(df, weights_dir):
         model.eval()
         epoch_val_loss, epoch_val_acc = [], []
         for i, data in enumerate(val_dataloader):
+            if i>=10:
+                break
             inputs = data['image'].to(device)
             labels = data['img_class'].to(device)
 
@@ -134,5 +142,7 @@ if __name__ == '__main__':
     for d in [exp_dir, weights_dir]:
         if not os.path.isdir(d):
             os.mkdir(d)
+    current_time = datetime.now().strftime("%d_%m_%Y-%H_%M_%S")
+    task = Task.init(project_name="face_recognition", task_name=f"test_{current_time}")
+    train_vgg(train_df, weights_dir, config)
 
-    train_vgg(train_df, weights_dir)
