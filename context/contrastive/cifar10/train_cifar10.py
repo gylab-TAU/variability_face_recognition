@@ -28,7 +28,7 @@ transform = transforms.Compose(
 
 contrastive_model_output_size = 128
 def train_contrastive(weights_dir: str, config):
-    epochs = config.num_epochs
+    epochs = config.num_epoch_contrastive
     writer = SummaryWriter(log_dir=weights_dir, comment=config.exp_name)
 
 
@@ -95,7 +95,7 @@ def train_contrastive(weights_dir: str, config):
     return model, val_dataloader, test_dataloader
 
 
-def transfer_model(model, val_dataloader, test_dataloader):
+def transfer_model(model, val_dataloader, test_dataloader, config):
     # Assuming model is your pre-trained contrastive model
     # You can create a feature extractor using the layers before the contrastive head
     feature_extractor = nn.Sequential(*list(model.children())[:-1])
@@ -110,7 +110,7 @@ def transfer_model(model, val_dataloader, test_dataloader):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(fine_tune_model.parameters(), lr=0.001, momentum=0.9)
 
-    num_epochs = 10
+    num_epochs = config.num_epoch_contrastive
     for epoch in range(num_epochs):
         epoch_loss = []
         fine_tune_model.train()
