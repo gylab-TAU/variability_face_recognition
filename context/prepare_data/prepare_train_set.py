@@ -1,10 +1,11 @@
 import os
 import pandas as pd
-import numpy as np
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
 from config import TrainSetConfig
+
+
 def create_train_set_df(config):
     '''
     This function creates a csv file with a unique train set, with the classes num and instances num from config.
@@ -15,22 +16,25 @@ def create_train_set_df(config):
     num_classes = config.num_classes
     train_size = config.train_num_instances_per_class
     val_size = config.val_num_instances_per_class
+    num_classes_per_category = config.num_classes_per_category
 
-    df = pd.DataFrame(columns=[['class', 'instance_num', 'image_name', 'image_path','set']])
+    df = pd.DataFrame(columns=[['class', 'category', 'instance_num', 'image_name', 'image_path', 'set']])
     classes = os.listdir(data_dir)
-    for class_num, cl in tqdm(enumerate(classes[0: num_classes])):
+    for class_num, class_name in tqdm(enumerate(classes[0: num_classes])):
+        category = class_num // num_classes_per_category
         class_df = pd.DataFrame(columns=df.columns)
-        class_path = os.path.join(data_dir, cl)
+        class_path = os.path.join(data_dir, class_name)
         if os.path.isdir(class_path):
             images = os.listdir(class_path)
             train_set, val_set = train_test_split(images, test_size=val_size, train_size=train_size, random_state=42)
-            for set, name in zip([train_set, val_set], ['train','val']):
+            for set, set_name in zip([train_set, val_set], ['train', 'val']):
                 for img in set:
                     img_path = os.path.join(class_path, img)
-                    row = [class_num, len(class_df), img, img_path, name]
-                    class_df.loc[len(class_df)]=row
-        df = pd.concat([df, class_df], axis =0)
+                    row = [class_num, category, len(class_df), img, img_path, set_name]
+                    class_df.loc[len(class_df)] = row
+        df = pd.concat([df, class_df], axis=0)
     return df
+
 
 if __name__ == '__main__':
     config = TrainSetConfig()
@@ -40,7 +44,7 @@ if __name__ == '__main__':
     df_path = f'{config.root_dir}/data/train_set_{num_classes}_{num_instances_per_class}.csv'
 
     if os.path.isfile(df_path):
-        print (f'File {df_path} already exists')
+        print(f'File {df_path} already exists')
     else:
         df = create_train_set_df(config)
-        df.to_csv(df_path)
+        df.to_csv(df_path, index=False)
