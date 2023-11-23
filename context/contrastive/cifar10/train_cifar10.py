@@ -10,6 +10,10 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+import seaborn as sns
+from clearml import Task
 
 from dataset import TripletCIFAR10Dataset
 from contrastive.losses import ContrastiveLoss
@@ -27,19 +31,21 @@ transform = transforms.Compose(
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
 contrastive_model_output_size = 128
-def train_contrastive(weights_dir: str, config):
+
+
+def train_contrastive(config, logger):
+    print('training contrastive')
     epochs = config.num_epoch_contrastive
-    writer = SummaryWriter(log_dir=weights_dir, comment=config.exp_name)
-
-
+    num_classes = config.num_classes
     # Create the triplet dataset
     cifar10_train_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform)
     cifar10_val_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform)
     # split validation dataset into validation and test
-    cifar10_val_dataset, cifar10_test_dataset = torch.utils.data.random_split(cifar10_val_dataset, [int(0.5 * len(cifar10_val_dataset)), int(0.5 * len(cifar10_val_dataset))])
+    cifar10_val_dataset, cifar10_test_dataset = torch.utils.data.random_split(cifar10_val_dataset,
+                                                                              [int(0.5 * len(cifar10_val_dataset)),
+                                                                               int(0.5 * len(cifar10_val_dataset))])
 
-    train_dataset = TripletCIFAR10Dataset(cifar10_train_dataset)
-
+    train_dataset = TripletCIFAR10Dataset(cifar10_train_dataset, num_classes)
 
     # Create a DataLoader for training
     train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
@@ -52,14 +58,13 @@ def train_contrastive(weights_dir: str, config):
     criterion = ContrastiveLoss(temperature=0.5)
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
-
     # Train loop
     for epoch in tqdm(range(epochs)):
         model.train()
         epoch_train_loss = []
 
         for batch_idx, (anchor, positive, negative) in enumerate(train_dataloader):
-            if batch_idx > 200:
+            if batch_idx > 2:
                 break
             anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
             optimizer.zero_grad()
@@ -67,42 +72,23 @@ def train_contrastive(weights_dir: str, config):
             loss = criterion(output_anchor, output_positive, output_negative)
             loss.backward()
             optimizer.step()
-
-            # print statistics
             epoch_train_loss.append(loss.item())
 
             if batch_idx % 10 == 0:  # print every x mini-batches
-                print(f'[epoch: {epoch + 1}/{epochs},step: {batch_idx  + 1:5d}/{len(train_dataloader)}] '
+                print(f'[epoch: {epoch + 1}/{epochs},step: {batch_idx + 1:5d}/{len(train_dataloader)}] '
                       f'loss: {np.mean(epoch_train_loss):.3f},')
 
-
-        writer.add_scalar('Loss/train', np.mean(epoch_train_loss), epoch)
-
-        writer.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
-
-        # # Validation loop
-        # model.eval()
-        # epoch_val_loss = []
-        # with torch.no_grad():
-        #     for batch_idx, (anchor, positive, negative) in enumerate(val_dataloader):
-        #         anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
-        #         output_anchor, output_positive, output_negative = model(anchor.float(), positive.float(), negative.float())
-        #         loss = criterion(output_anchor, output_positive, output_negative)
-        #         epoch_val_loss.append(loss.item())
-        #
-        # writer.add_scalar('Loss/val', np.mean(epoch_val_loss), epoch)
-
+        logger.report_scalar(title='Contrastive'.format(epoch),
+                             series='Loss', value=np.mean(epoch_train_loss), iteration=epoch)
+        get_tsne_of_representations(model, test_dataloader, logger)
     return model, val_dataloader, test_dataloader
 
 
-def transfer_model(model, val_dataloader, test_dataloader, config):
-    # Assuming model is your pre-trained contrastive model
-    # You can create a feature extractor using the layers before the contrastive head
+def transfer_model(model, val_dataloader, test_dataloader, config, logger):
+    print('training transfer model')
     feature_extractor = nn.Sequential(*list(model.children())[:-1])
-
-    #Fine-tuning for CIFAR-10 classification
     fine_tune_model = nn.Sequential(
-        nn.Linear(contrastive_model_output_size*8*8, 256),
+        nn.Linear(1000, 256),
         nn.ReLU(),
         nn.Linear(256, 10)  # Assuming 10 classes for CIFAR-10
     ).to(device)
@@ -131,9 +117,13 @@ def transfer_model(model, val_dataloader, test_dataloader, config):
             optimizer.step()
             epoch_loss.append(loss.item())
 
-            #print loss
+            # print loss
             if batch_idx % 10 == 0:  # print every x mini-batches
-                print(f'[epoch: {epoch + 1}/{num_epochs},step: {batch_idx  + 1:5d}/{len(val_dataloader)}] , loss: {np.mean(epoch_loss):.3f},')
+                print(
+                    f'[epoch: {epoch + 1}/{num_epochs},step: {batch_idx + 1:5d}/{len(val_dataloader)}] , loss: {np.mean(epoch_loss):.3f},')
+
+        logger.report_scalar(title='Transfer', series='Loss', value=np.mean(epoch_loss), iteration=epoch)
+
 
     # Test the fine-tuned model
     fine_tune_model.eval()
@@ -152,10 +142,42 @@ def transfer_model(model, val_dataloader, test_dataloader, config):
             accuracy.append(correct / total)
 
     print(f'Accuracy of the network on the test set: {np.mean(accuracy):.3f}')
+    logger.report_text('Accuracy of the network on the test set: {np.mean(accuracy):.3f}')
 
     return fine_tune_model
 
 
+def get_tsne_of_representations(model, test_dataloader, logger, epoch):
+    feature_extractor = nn.Sequential(*list(model.children())[:-1])
+    feature_extractor.eval()
+    with torch.no_grad():
+        features = []
+        labels = []
+        for batch_idx, (inputs, label) in enumerate(test_dataloader):
+            inputs, label = inputs.to(device), label.to(device)
+            features.append(feature_extractor(inputs).cpu().numpy())
+            labels.append(label.cpu().numpy())
+
+    features = np.concatenate(features)
+    labels = np.concatenate(labels)
+
+    tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+    tsne_results = tsne.fit_transform(features)
+
+    #plot
+    plt.figure(figsize=(16, 10))
+    sns.scatterplot(
+        x=tsne_results[:, 0], y=tsne_results[:, 1],
+        hue=labels,
+        palette=sns.color_palette("hls", 10),
+        legend="full",
+        alpha=0.3
+    )
+    plt.show()
+    logger.report_matplotlib_figure(
+        title="TSNE", series="plot", iteration=epoch, figure=plt, report_image=True
+    )
+    return tsne_results, labels
 
 if __name__ == '__main__':
     results_dir = r"C:\Users\shiri\Documents\School\Master\Research\Context"
@@ -170,7 +192,8 @@ if __name__ == '__main__':
         if not os.path.isdir(d):
             os.mkdir(d)
     current_time = datetime.now().strftime("%d_%m_%Y-%H_%M_%S")
-    # task = Task.init(project_name="face_recognition", task_name=f"test_{current_time}")
-    # logger = task.get_logger()
-    model, val_dataloader, test_dataloader = train_contrastive(weights_dir, config)
-    fine_tune_model = transfer_model(model, val_dataloader, test_dataloader)
+    task = Task.init(project_name="face_recognition", task_name=f"test_{current_time}")
+    logger = task.get_logger()
+    #writer = SummaryWriter(log_dir=weights_dir, comment=config.exp_name)
+    model, val_dataloader, test_dataloader = train_contrastive(config, logger)
+    fine_tune_model = transfer_model(model, val_dataloader, test_dataloader, config, logger)

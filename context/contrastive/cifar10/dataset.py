@@ -4,16 +4,27 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import random
+import numpy as np
 
 random.seed(42)
 
 class TripletCIFAR10Dataset(Dataset):
-    def __init__(self, cifar10_dataset):
+    def __init__(self, cifar10_dataset, num_classes = None):
         self.cifar10_dataset = cifar10_dataset
-        self.num_classes = len(set(cifar10_dataset.targets))
+        if num_classes is None:
+            self.num_classes = len(set(cifar10_dataset.targets))
+        else:
+            self.num_classes = num_classes
         self.class_to_indices = self._create_class_to_indices()
 
+    def _create_subset(self):
+        chosen_indices = np.array(range(self.num_classes))
+        subset_indices = np.where(np.isin(self.cifar10_dataset.targets, chosen_indices))[0]
+        self.cifar10_dataset.data = self.cifar10_dataset.data[subset_indices]
+        self.cifar10_dataset.targets = np.array(self.cifar10_dataset.targets)[subset_indices]
+
     def _create_class_to_indices(self):
+        self._create_subset()
         class_to_indices = {}
         for i, target in enumerate(self.cifar10_dataset.targets):
             if target not in class_to_indices:
