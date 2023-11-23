@@ -80,7 +80,7 @@ def train_contrastive(config, logger):
 
         logger.report_scalar(title='Contrastive'.format(epoch),
                              series='Loss', value=np.mean(epoch_train_loss), iteration=epoch)
-        get_tsne_of_representations(model, test_dataloader, logger)
+        get_tsne_of_representations(model, test_dataloader, logger, epoch)
     return model, val_dataloader, test_dataloader
 
 
