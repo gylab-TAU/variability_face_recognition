@@ -7,6 +7,7 @@ from models import ResNetSimCLR
 from simclr import SimCLR
 from datetime import datetime
 from clearml import Task
+import numpy as np
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -45,7 +46,14 @@ parser.add_argument('--temperature', default=0.07, type=float,
 parser.add_argument('--n-views', default=2, type=int, metavar='N',
                     help='Number of views for contrastive learning training.')
 parser.add_argument('--gpu-index', default=0, type=int, help='Gpu index.')
+parser.add_argument('--num_classes', default=4, type=int, help='Number of classes in the dataset.')
 
+
+def select_subset(dataset, indices_list):
+    indices = np.where(np.isin(dataset.targets, indices_list))[0]
+    dataset.data = dataset.data[indices]
+    dataset.targets = np.array(dataset.targets)[indices]
+    return dataset
 
 def main():
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -53,9 +61,14 @@ def main():
     datasets = ContrastiveLearningDataset(args.data)
     train_dataset = datasets.get_dataset(args.n_views, 'cifar10_train')
     val_dataset = datasets.get_dataset(args.n_views, 'cifar10_val')
-    #spltit val_dataset into val_dataset and test_dataset
-    val_dataset, test_dataset = torch.utils.data.random_split(val_dataset, [int(len(val_dataset)*0.9), int(len(val_dataset)*0.1)])
 
+    if args.num_classes != 10:
+        class_indices = np.arange(args.num_classes)
+        train_dataset = select_subset(train_dataset, class_indices)
+        val_dataset = select_subset(val_dataset, class_indices)
+
+    val_dataset, test_dataset = torch.utils.data.random_split(val_dataset, [int(len(val_dataset) * 0.9),
+                                                                            int(len(val_dataset) * 0.1)])
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True, drop_last=True)
