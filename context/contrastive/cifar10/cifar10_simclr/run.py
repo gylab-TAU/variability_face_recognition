@@ -5,6 +5,8 @@ from torchvision import models
 from data_augs.datasets import ContrastiveLearningDataset
 from models import ResNetSimCLR
 from simclr import SimCLR
+from datetime import datetime
+from clearml import Task
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -73,8 +75,10 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=0,
                                                            last_epoch=-1)
 
-
-    simclr = SimCLR(model=model, optimizer=optimizer, scheduler=scheduler, args=args)
+    current_time = datetime.now().strftime("%d_%m_%Y-%H_%M_%S")
+    task = Task.init(project_name="SimCLR", task_name=f"test_{current_time}")
+    logger = task.get_logger()
+    simclr = SimCLR(model=model, optimizer=optimizer, scheduler=scheduler, args=args, logger=logger, device=device)
     simclr.train(train_loader, val_loader, test_loader)
 
 

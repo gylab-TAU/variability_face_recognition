@@ -9,27 +9,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.manifold import TSNE
+import random
 
 from utils import accuracy, save_checkpoint, save_config_file
 
-torch.manual_seed(0)
+torch.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
 
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 class SimCLR(object):
 
     def __init__(self, *args, **kwargs):
+        self.device = kwargs['device']
         self.args = kwargs['args']
-        self.model = kwargs['model'].to(device)
+        self.model = kwargs['model'].to(self.device)
         self.optimizer = kwargs['optimizer']
         self.scheduler = kwargs['scheduler']
-        self.writer = SummaryWriter()
-        logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
-        self.criterion = torch.nn.CrossEntropyLoss().to(device)
+        self.logger = kwargs['logger']
+        #logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
+        self.criterion = torch.nn.CrossEntropyLoss().to(self.device)
 
     def info_nce_loss(self, features):
         labels = torch.cat([torch.arange(self.args.batch_size) for i in range(self.args.n_views)], dim=0)
         labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
+        labels = labels.to(self.device)
 
         features = F.normalize(features, dim=1)
 
@@ -51,7 +55,7 @@ class SimCLR(object):
         negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
 
         logits = torch.cat([positives, negatives], dim=1)
-        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long).to(self.device)
 
         logits = logits / self.args.temperature
         return logits, labels
@@ -65,7 +69,7 @@ class SimCLR(object):
             labels = []
             for batch_idx, (inputs, label) in enumerate(test_dataloader):
                 inputs = inputs[0]
-                inputs, label = inputs.to(device), label.to(device)
+                inputs, label = inputs.to(self.device), label.to(self.device)
                 features.append(feature_extractor(inputs).cpu().numpy())
                 labels.append(label.cpu().numpy())
 
@@ -85,16 +89,15 @@ class SimCLR(object):
             legend="full",
             alpha=0.5
         )
-        plt.show()
-        # logger.report_matplotlib_figure(
-        #     title="TSNE", series="plot", iteration=epoch, figure=plt, report_image=True
-        # )
+        self.logger.report_matplotlib_figure(
+            title="TSNE", series="plot", iteration=epoch, figure=plt, report_image=True
+        )
         return tsne_results, labels
 
     def train(self, train_loader,  val_loader, test_loader):
 
         # save config file
-        save_config_file(self.writer.log_dir, self.args)
+        #save_config_file(self.writer.log_dir, self.args)
 
         n_iter = 0
         logging.info(f"Start SimCLR training for {self.args.epochs} epochs.")
@@ -105,7 +108,7 @@ class SimCLR(object):
             for images, _ in tqdm(train_loader):
                 images = torch.cat(images, dim=0)
 
-                images = images.to(device)
+                images = images.to(self.device)
 
                 features = self.model(images)
                 logits, labels = self.info_nce_loss(features)
@@ -119,11 +122,10 @@ class SimCLR(object):
 
                 if n_iter % self.args.log_every_n_steps == 0:
                     top1, top5 = accuracy(logits, labels, topk=(1, 5))
-                    self.writer.add_scalar('loss', loss, global_step=n_iter)
-                    self.writer.add_scalar('acc/top1', top1[0], global_step=n_iter)
-                    self.writer.add_scalar('acc/top5', top5[0], global_step=n_iter)
-                    self.writer.add_scalar('learning_rate', self.scheduler.get_lr()[0], global_step=n_iter)
-                    print (f"Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}, Top5 accuracy: {top5[0]}")
+                    self.logger.report_scalar(title="loss", series="train", value=loss.item(), iteration=n_iter)
+                    self.logger.report_scalar(title="top1", series="train", value=top1[0], iteration=n_iter)
+                    self.logger.report_scalar(title="top5", series="train", value=top5[0], iteration=n_iter)
+                    self.logger.report_text(f'Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}, Top5 accuracy: {top5[0]}')
 
 
                 n_iter += 1
@@ -138,12 +140,12 @@ class SimCLR(object):
 
         logging.info("Training has finished.")
         # save model checkpoints
-        checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(self.args.epochs)
-        save_checkpoint({
-            'epoch': self.args.epochs,
-            'arch': self.args.arch,
-            'state_dict': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-        }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
-        logging.info(f"Model checkpoint and metadata has been saved at {self.writer.log_dir}.")
+        # checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(self.args.epochs)
+        # save_checkpoint({
+        #     'epoch': self.args.epochs,
+        #     'arch': self.args.arch,
+        #     'state_dict': self.model.state_dict(),
+        #     'optimizer': self.optimizer.state_dict(),
+        # }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
+        # logging.info(f"Model checkpoint and metadata has been saved at {self.writer.log_dir}.")
 
