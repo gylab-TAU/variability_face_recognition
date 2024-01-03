@@ -1,4 +1,6 @@
 import os
+import random
+
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -14,21 +16,25 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import seaborn as sns
 from clearml import Task
+from sklearn.decomposition import PCA
 
 from dataset import TripletCIFAR10Dataset
 from contrastive.losses import ContrastiveLoss
 from config import TrainConfig
 from contrastive.model import SiameseNetwork
+from sklearn.cluster import KMeans
 
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 np.random.seed(42)
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
+random.seed(42)
+
 
 transform = transforms.Compose(
     [transforms.ToTensor(),
-     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
 contrastive_model_output_size = 128
 
@@ -39,25 +45,34 @@ def train_contrastive(config, logger):
     num_classes = config.num_classes
     # Create the triplet dataset
     cifar10_train_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform)
+    train_dataset = TripletCIFAR10Dataset(cifar10_train_dataset, num_classes)
+
     cifar10_val_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform)
+    if num_classes !=10:
+        indices_list = np.array(range(num_classes))
+        class_indices = np.where(np.isin(cifar10_val_dataset.targets, indices_list))[0]
+        cifar10_val_dataset.data = cifar10_val_dataset.data[class_indices]
+        cifar10_val_dataset.targets = np.array(cifar10_val_dataset.targets)[class_indices]
+
     # split validation dataset into validation and test
     cifar10_val_dataset, cifar10_test_dataset = torch.utils.data.random_split(cifar10_val_dataset,
-                                                                              [int(0.5 * len(cifar10_val_dataset)),
-                                                                               int(0.5 * len(cifar10_val_dataset))])
+                                                                              [int(0.6 * len(cifar10_val_dataset)),
+                                                                               int(0.4 * len(cifar10_val_dataset))])
 
-    train_dataset = TripletCIFAR10Dataset(cifar10_train_dataset, num_classes)
+
 
     # Create a DataLoader for training
     train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_dataloader = DataLoader(cifar10_val_dataset, batch_size=config.batch_size, shuffle=True, num_workers=2)
     test_dataloader = DataLoader(cifar10_test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=2)
 
-    model = SiameseNetwork()
+    model = SiameseNetwork(embedding_dim=contrastive_model_output_size)
 
     model.to(device)
     criterion = ContrastiveLoss(temperature=0.5)
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
-
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40, 60], gamma=0.1)
+    get_tsne_of_representations(model, test_dataloader, logger, 0)
     # Train loop
     for epoch in tqdm(range(epochs)):
         model.train()
@@ -141,14 +156,13 @@ def transfer_model(model, val_dataloader, test_dataloader, config, logger):
             correct = (predicted == labels).sum().item()
             accuracy.append(correct / total)
 
-    print(f'Accuracy of the network on the test set: {np.mean(accuracy):.3f}')
-    logger.report_text('Accuracy of the network on the test set: {np.mean(accuracy):.3f}')
+    logger.report_text(f'Accuracy of the network on the test set: {np.mean(accuracy):.3f}')
 
     return fine_tune_model
 
 
 def get_tsne_of_representations(model, test_dataloader, logger, epoch):
-    feature_extractor = nn.Sequential(*list(model.children())[:-1])
+    feature_extractor = nn.Sequential(*list(model.children()))
     feature_extractor.eval()
     with torch.no_grad():
         features = []
@@ -161,15 +175,19 @@ def get_tsne_of_representations(model, test_dataloader, logger, epoch):
     features = np.concatenate(features)
     labels = np.concatenate(labels)
 
-    tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
-    tsne_results = tsne.fit_transform(features)
-
     #plot
+
+    # pca = PCA(n_components=50)
+    # pca.fit(features)
+    # pca_features = pca.transform(features)
+
+    tsne = TSNE(n_components=2, perplexity=30, n_iter=300)
+    tsne_results = tsne.fit_transform(features)
     plt.figure(figsize=(16, 10))
     sns.scatterplot(
         x=tsne_results[:, 0], y=tsne_results[:, 1],
         hue=labels,
-        palette=sns.color_palette("hls", 10),
+        palette=sns.color_palette("hls", len(labels)),
         legend="full",
         alpha=0.3
     )

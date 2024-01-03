@@ -15,9 +15,6 @@ class ContrastiveLoss(nn.Module):
         logits = torch.cat([sim_pos.unsqueeze(1), sim_neg.unsqueeze(1)], dim=1)
         labels = torch.zeros(logits.size(0), dtype=torch.long).to(anchor.device)
 
-        # compute triplet loss
-        # logits = sim_pos - sim_neg
-        # labels = torch.ones(logits.size(0), dtype=torch.long).to(anchor.device)
 
 
         loss = nn.CrossEntropyLoss()(logits, labels)
